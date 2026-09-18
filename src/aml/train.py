@@ -25,9 +25,13 @@ def _make_early_stop():
 
 
 def train_sector_models(sectors, processed_data_dict: Dict, scalers: Dict, models_dir: Path,
-                         model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE):
-    """Train every (model_type x sector) combination. Returns (all_results, model_histories)."""
-    models_dir = Path(models_dir)
+                         model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE,
+                         save_models: bool = True):
+    """Train every (model_type x sector) combination. Returns (all_results, model_histories).
+
+    save_models=False skips persisting .keras files -- used by the multi-seed
+    sweep, which only needs the metrics, not 75 throwaway model files."""
+    models_dir = Path(models_dir) if models_dir is not None else None
     all_results = {m: {} for m in model_types}
     model_histories = {m: {} for m in model_types}
 
@@ -74,10 +78,14 @@ def train_sector_models(sectors, processed_data_dict: Dict, scalers: Dict, model
                 "predicted_closing_prices": predicted_prices,
             }
 
-            model_path = model_path_for(models_dir, model_type, sector)
-            model.save(model_path)
-            logger.info("%s saved -> %s | Test MSE=%.6f MAE=%.6f | Price RMSE=%.6f MAE=%.6f",
-                        model_type, model_path, test_mse, test_mae, rmse_actual, mae_actual)
+            if save_models:
+                model_path = model_path_for(models_dir, model_type, sector)
+                model.save(model_path)
+                logger.info("%s saved -> %s | Test MSE=%.6f MAE=%.6f | Price RMSE=%.6f MAE=%.6f",
+                            model_type, model_path, test_mse, test_mae, rmse_actual, mae_actual)
+            else:
+                logger.info("%s | %s | Test MSE=%.6f MAE=%.6f | Price RMSE=%.6f MAE=%.6f",
+                            model_type, sector, test_mse, test_mae, rmse_actual, mae_actual)
 
     return all_results, model_histories
 

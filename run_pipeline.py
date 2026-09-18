@@ -22,6 +22,10 @@ Evaluate saved models against a fresh, unseen CSV:
 Classical baselines (naive persistence + ARIMA), merged with the trained-model
 comparison table if it already exists:
     python run_pipeline.py baselines
+
+Multi-seed robustness sweep (retrains per-sector models under several seeds,
+no models persisted, only metrics -- check whether the single-seed results hold):
+    python run_pipeline.py multiseed --seeds 42 7 123 2024 8675309
 """
 from __future__ import annotations
 
@@ -39,8 +43,11 @@ from aml.config import BATCH_SIZE, EPOCHS, MODEL_TYPES, get_paths, set_seeds  # 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=[
-        "all", "prep-data", "preprocess", "train", "evaluate", "visualize", "xai", "realworld", "baselines",
+        "all", "prep-data", "preprocess", "train", "evaluate", "visualize", "xai", "realworld",
+        "baselines", "multiseed",
     ])
+    parser.add_argument("--seeds", type=int, nargs="+", default=None,
+                         help="Seeds for the 'multiseed' stage (default: 42 7 123 2024 8675309).")
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--models", nargs="+", default=MODEL_TYPES, choices=MODEL_TYPES,
@@ -100,6 +107,9 @@ def main():
             paths.scalers_dir, paths.results_dir, paths.figures_dir)
     elif args.stage == "baselines":
         pipeline.stage_baselines(state)
+    elif args.stage == "multiseed":
+        pipeline.stage_multiseed(state, seeds=args.seeds, model_types=args.models,
+                                  epochs=epochs, batch_size=args.batch_size)
 
 
 if __name__ == "__main__":

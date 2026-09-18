@@ -23,7 +23,7 @@ from typing import Dict, List, Optional
 import joblib
 import pandas as pd
 
-from . import baselines, data_prep, evaluate, preprocessing, train, visualize, xai
+from . import baselines, data_prep, evaluate, multiseed, preprocessing, train, visualize, xai
 from .config import EPOCHS, BATCH_SIZE, MODEL_TYPES, Paths, get_paths, set_seeds
 
 logger = logging.getLogger(__name__)
@@ -139,6 +139,22 @@ def stage_baselines(state: PipelineState):
     table (outputs/results/comparison_per_sector.csv) if it exists."""
     return baselines.run_baselines(state.sectors, state.processed_data_dict,
                                     state.scalers, state.paths.results_dir)
+
+
+def stage_multiseed(state: PipelineState, seeds=None, model_types=MODEL_TYPES,
+                     epochs=EPOCHS, batch_size=BATCH_SIZE):
+    """Retrain per-sector models under several seeds to check the single-seed
+    results are robust. Also computes the naive baseline (deterministic) so
+    each seed's result can be checked against it."""
+    df_sweep = multiseed.run_multiseed_sweep(
+        state.sectors, state.processed_data_dict, state.scalers, state.paths.results_dir,
+        model_types=model_types, seeds=seeds, epochs=epochs, batch_size=batch_size)
+    naive_df = baselines.naive_persistence_baseline(state.sectors, state.processed_data_dict, state.scalers)
+    summary = multiseed.summarize_multiseed(df_sweep, naive_df)
+    summary_path = state.paths.results_dir / "multiseed_summary.csv"
+    summary.to_csv(summary_path, index=False)
+    logger.info("Saved: %s", summary_path)
+    return df_sweep, summary
 
 
 def run_all(root=None, model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE,
