@@ -18,6 +18,10 @@ Run a single stage (each depends on the previous stage's outputs already existin
 
 Evaluate saved models against a fresh, unseen CSV:
     python run_pipeline.py realworld --input path/to/new_data.csv
+
+Classical baselines (naive persistence + ARIMA), merged with the trained-model
+comparison table if it already exists:
+    python run_pipeline.py baselines
 """
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ from aml.config import BATCH_SIZE, EPOCHS, MODEL_TYPES, get_paths, set_seeds  # 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=[
-        "all", "prep-data", "preprocess", "train", "evaluate", "visualize", "xai", "realworld",
+        "all", "prep-data", "preprocess", "train", "evaluate", "visualize", "xai", "realworld", "baselines",
     ])
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -94,6 +98,8 @@ def main():
         realworld.run_realworld_eval(
             args.input, state.sectors, args.models, paths.models_dir,
             paths.scalers_dir, paths.results_dir, paths.figures_dir)
+    elif args.stage == "baselines":
+        pipeline.stage_baselines(state)
 
 
 if __name__ == "__main__":

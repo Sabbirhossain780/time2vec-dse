@@ -8,6 +8,9 @@ notebook's block order:
   4. visualize   : training curves, prediction plots, result analysis (visualize)
   5. xai         : occlusion sensitivity + integrated gradients       (xai)
 
+Plus an opt-in stage not part of the default `all` run:
+  baselines      : naive persistence + ARIMA, for comparison            (baselines)
+
 Each stage is a plain function that can be called independently (e.g. from a
 notebook) or chained through `run_all`.
 """
@@ -20,7 +23,7 @@ from typing import Dict, List, Optional
 import joblib
 import pandas as pd
 
-from . import data_prep, evaluate, preprocessing, train, visualize, xai
+from . import baselines, data_prep, evaluate, preprocessing, train, visualize, xai
 from .config import EPOCHS, BATCH_SIZE, MODEL_TYPES, Paths, get_paths, set_seeds
 
 logger = logging.getLogger(__name__)
@@ -129,6 +132,13 @@ def stage_visualize(state: PipelineState, model_types=MODEL_TYPES):
 def stage_xai(state: PipelineState, model_types=MODEL_TYPES):
     return xai.run_xai(state.sectors, model_types, state.processed_data_dict,
                         state.paths.models_dir, state.paths.xai_dir)
+
+
+def stage_baselines(state: PipelineState):
+    """Naive persistence + ARIMA, merged with the trained-model comparison
+    table (outputs/results/comparison_per_sector.csv) if it exists."""
+    return baselines.run_baselines(state.sectors, state.processed_data_dict,
+                                    state.scalers, state.paths.results_dir)
 
 
 def run_all(root=None, model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE,
