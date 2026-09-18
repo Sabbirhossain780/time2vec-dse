@@ -43,7 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from aml import pipeline, realworld  # noqa: E402
-from aml.config import BATCH_SIZE, EPOCHS, MODEL_TYPES, get_paths, set_seeds  # noqa: E402
+from aml.config import ALL_MODEL_TYPES, BATCH_SIZE, EPOCHS, MODEL_TYPES, get_paths, set_seeds  # noqa: E402
 
 
 def main():
@@ -56,10 +56,14 @@ def main():
                          help="Seed for the 'multiseed' stage (one seed per invocation).")
     parser.add_argument("--seeds", type=int, nargs="+", default=None,
                          help="Seeds for 'multiseed-merge' (default: 42 7 123 2024 8675309).")
+    parser.add_argument("--tag", type=str, default="",
+                         help="Filename tag for the 'multiseed' stage, e.g. '_transformerv2', "
+                              "so an experimental sweep doesn't overwrite the baseline seed files.")
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--models", nargs="+", default=MODEL_TYPES, choices=MODEL_TYPES,
-                         help="Subset of model types to run (default: all three).")
+    parser.add_argument("--models", nargs="+", default=MODEL_TYPES, choices=ALL_MODEL_TYPES,
+                         help="Subset of model types to run (default: Transformer LSTM RNN). "
+                              "TransformerV2 is opt-in only, not part of the default set.")
     parser.add_argument("--strict-data-prep", action="store_true",
                          help="Fail if the reconstructed stockprice.csv row count doesn't match the documented provenance (4270).")
     parser.add_argument("--skip-xai", action="store_true", help="Skip the XAI stage when running 'all'.")
@@ -119,9 +123,9 @@ def main():
         if args.seed is None:
             parser.error("--seed is required for the 'multiseed' stage (one seed per invocation)")
         pipeline.stage_multiseed_single(state, seed=args.seed, model_types=args.models,
-                                         epochs=epochs, batch_size=args.batch_size)
+                                         epochs=epochs, batch_size=args.batch_size, tag=args.tag)
     elif args.stage == "multiseed-merge":
-        pipeline.stage_multiseed_merge(state, seeds=args.seeds)
+        pipeline.stage_multiseed_merge(state, seeds=args.seeds, tag=args.tag)
 
 
 if __name__ == "__main__":

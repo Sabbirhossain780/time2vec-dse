@@ -142,21 +142,21 @@ def stage_baselines(state: PipelineState):
 
 
 def stage_multiseed_single(state: PipelineState, seed: int, model_types=MODEL_TYPES,
-                            epochs=EPOCHS, batch_size=BATCH_SIZE):
+                            epochs=EPOCHS, batch_size=BATCH_SIZE, tag: str = ""):
     """Train one seed's worth of per-sector models and save it durably. Meant
     to be invoked as its own OS process per seed -- see multiseed.py."""
     return multiseed.run_single_seed(
         seed, state.sectors, state.processed_data_dict, state.scalers, state.paths.results_dir,
-        model_types=model_types, epochs=epochs, batch_size=batch_size)
+        model_types=model_types, epochs=epochs, batch_size=batch_size, tag=tag)
 
 
-def stage_multiseed_merge(state: PipelineState, seeds=None):
-    """Merge whichever multiseed_seed_<seed>.csv files exist and summarize
-    against the (deterministic) naive baseline."""
-    df_sweep = multiseed.merge_multiseed_results(state.paths.results_dir, seeds=seeds)
+def stage_multiseed_merge(state: PipelineState, seeds=None, tag: str = ""):
+    """Merge whichever multiseed_seed_<seed><tag>.csv files exist and
+    summarize against the (deterministic) naive baseline."""
+    df_sweep = multiseed.merge_multiseed_results(state.paths.results_dir, seeds=seeds, tag=tag)
     naive_df = baselines.naive_persistence_baseline(state.sectors, state.processed_data_dict, state.scalers)
     summary = multiseed.summarize_multiseed(df_sweep, naive_df)
-    summary_path = state.paths.results_dir / "multiseed_summary.csv"
+    summary_path = state.paths.results_dir / f"multiseed_summary{tag}.csv"
     summary.to_csv(summary_path, index=False)
     logger.info("Saved: %s", summary_path)
     return df_sweep, summary

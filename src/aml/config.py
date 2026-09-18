@@ -18,6 +18,12 @@ FEATURES = ["open", "high", "low", "close", "volume"]
 RET_COLS = [f"return_{c}" for c in FEATURES]
 MODEL_TYPES = ["Transformer", "LSTM", "RNN"]
 
+# TransformerV2 (mean pooling + LR warmup/decay, see models.py) is an opt-in
+# experimental variant -- selectable via --models but not part of the
+# default MODEL_TYPES that `all`/most stages iterate, so it never silently
+# changes the default pipeline's behavior or runtime.
+ALL_MODEL_TYPES = MODEL_TYPES + ["TransformerV2"]
+
 EPOCHS = 50
 BATCH_SIZE = 32
 TRAIN_RATIO = 0.8

@@ -38,9 +38,12 @@ DEFAULT_SEEDS = [42, 7, 123, 2024, 8675309]
 
 
 def run_single_seed(seed: int, sectors, processed_data_dict: Dict, scalers: Dict, results_dir: Path,
-                     model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE) -> pd.DataFrame:
+                     model_types=MODEL_TYPES, epochs=EPOCHS, batch_size=BATCH_SIZE, tag: str = "") -> pd.DataFrame:
     """Train every (model_type x sector) combination for one seed and save
-    immediately to outputs/results/multiseed_seed_<seed>.csv."""
+    immediately to outputs/results/multiseed_seed_<seed><tag>.csv.
+
+    `tag` (e.g. "_transformerv2") keeps an experimental sweep from
+    overwriting the baseline multiseed_seed_<seed>.csv files."""
     results_dir = Path(results_dir)
     logger.info("===== Seed %s =====", seed)
     set_seeds(seed)
@@ -62,22 +65,22 @@ def run_single_seed(seed: int, sectors, processed_data_dict: Dict, scalers: Dict
             })
 
     df = pd.DataFrame(rows)
-    out_path = results_dir / f"multiseed_seed_{seed}.csv"
+    out_path = results_dir / f"multiseed_seed_{seed}{tag}.csv"
     df.to_csv(out_path, index=False)
     logger.info("Saved: %s (%d rows)", out_path, len(df))
     return df
 
 
-def merge_multiseed_results(results_dir: Path, seeds: List[int] = None) -> pd.DataFrame:
-    """Concatenate whichever outputs/results/multiseed_seed_*.csv files exist
-    into the combined outputs/results/multiseed_comparison.csv."""
+def merge_multiseed_results(results_dir: Path, seeds: List[int] = None, tag: str = "") -> pd.DataFrame:
+    """Concatenate whichever outputs/results/multiseed_seed_*<tag>.csv files
+    exist into outputs/results/multiseed_comparison<tag>.csv."""
     results_dir = Path(results_dir)
     seeds = seeds or DEFAULT_SEEDS
 
     frames = []
     missing = []
     for seed in seeds:
-        p = results_dir / f"multiseed_seed_{seed}.csv"
+        p = results_dir / f"multiseed_seed_{seed}{tag}.csv"
         if p.exists():
             frames.append(pd.read_csv(p))
         else:
@@ -85,10 +88,10 @@ def merge_multiseed_results(results_dir: Path, seeds: List[int] = None) -> pd.Da
     if missing:
         logger.warning("Missing per-seed files for seeds %s -- merging what's available.", missing)
     if not frames:
-        raise FileNotFoundError(f"No multiseed_seed_*.csv files found under {results_dir}")
+        raise FileNotFoundError(f"No multiseed_seed_*{tag}.csv files found under {results_dir}")
 
     df = pd.concat(frames, ignore_index=True)
-    out_path = results_dir / "multiseed_comparison.csv"
+    out_path = results_dir / f"multiseed_comparison{tag}.csv"
     df.to_csv(out_path, index=False)
     logger.info("Saved: %s (%d seeds merged, %d rows)", out_path, len(frames), len(df))
     return df

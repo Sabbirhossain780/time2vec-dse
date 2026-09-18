@@ -135,6 +135,53 @@ dataset is not a reliable basis for a "beats baseline" claim.** Several of
 this project's own earlier verdicts (in an earlier version of this
 README) would not have survived this check.
 
+### Trying to fix the Transformer: a targeted experiment (mixed result)
+
+Two specific, targeted fixes for the instability/underperformance diagnosed
+above: (1) mean pooling over all 8 timesteps instead of reading out only the
+last position, and (2) a linear warmup + cosine-decay learning rate schedule
+instead of flat Adam -- both known remedies for exactly the kind of
+optimization instability the multi-seed sweep exposed. Implemented as
+`TransformerV2` (`src/aml/models.py`, `build_transformer_model_v2`) and
+compared against the original `Transformer` retrained under **identical
+conditions** (same 5 seeds, same run, trained back-to-back per sector, so
+the comparison isn't confounded by a different RNG call sequence across
+separate runs -- reproduce with `python run_pipeline.py multiseed --seed
+<n> --models Transformer TransformerV2 --tag _v1v2`, x5, then
+`multiseed-merge --tag _v1v2`).
+
+| | Transformer (original) | TransformerV2 |
+|---|---|---|
+| Mean RMSE, avg across sectors | **1.055** | 1.119 |
+| Std (run-to-run stability), avg across sectors | 0.197 | **0.124** (−37%) |
+| Beats naive, all 25 seed×sector combinations | **12/25 (48%)** | 8/25 (32%) |
+
+**It's a real, mixed result, not a clean win.** TransformerV2 is
+meaningfully more stable (lower run-to-run variance in 4/5 sectors,
+sometimes dramatically -- Services & Real Estate's std fell from 0.332 to
+0.095), confirming the training-instability diagnosis was correct. But mean
+accuracy and the beats-naive rate both got *worse* overall, including a
+real regression in Fuel & Power (RMSE 1.85 -> 2.21; beats-naive dropped
+from 5/5 to 3/5 seeds -- previously the one sector the original Transformer
+was actually reliable in).
+
+**Best guess why:** mean pooling assumes every timestep deserves roughly
+equal weight in the final prediction. But the XAI results above already
+show this problem is heavily recency-biased -- `t-1` dominates occlusion
+sensitivity in 14/15 (model, sector) combinations. Take-last, for all its
+"discards information" framing, was actually a reasonable architectural
+match for a recency-dominated problem: it reads out exactly the position
+that matters most. Mean pooling dilutes that signal by averaging in 7
+comparatively uninformative earlier timesteps. The fix addressed the
+instability correctly, but at the cost of fighting the data's own
+structure -- which take-last happened to exploit, likely by accident
+rather than design.
+
+**Left as a follow-up, not implemented:** an attention-weighted pooling
+(learn the weights instead of hand-picking mean or last), or the warmup
+schedule alone without the pooling change, to isolate which of the two
+fixes is actually responsible for the stability gain.
+
 ### What the XAI stage found
 
 `xai_summary.csv` (occlusion sensitivity + integrated gradients, all 3
@@ -238,11 +285,17 @@ python run_pipeline.py realworld --input new.csv   # score saved models against 
 # Multi-seed robustness check: one seed per invocation (each saves durably), then merge
 python run_pipeline.py multiseed --seed 42   # ...repeat for 7, 123, 2024, 8675309 (or your own seeds)
 python run_pipeline.py multiseed-merge       # outputs/results/multiseed_comparison.csv + _summary.csv
+
+# TransformerV2 experiment: paired with the original under identical seeds (--tag keeps
+# it from overwriting the baseline multiseed files above)
+python run_pipeline.py multiseed --seed 42 --models Transformer TransformerV2 --tag _v1v2
+python run_pipeline.py multiseed-merge --tag _v1v2
 ```
 
-Useful flags: `--models Transformer LSTM` (subset), `--epochs`, `--batch-size`,
-`--strict-data-prep` (fail instead of warn if the raw-data reconstruction
-doesn't match the documented 4270-row provenance), `-v` for debug logging.
+Useful flags: `--models Transformer LSTM` (subset; `TransformerV2` is opt-in,
+not part of the default set), `--epochs`, `--batch-size`, `--strict-data-prep`
+(fail instead of warn if the raw-data reconstruction doesn't match the
+documented 4270-row provenance), `-v` for debug logging.
 
 ### Checking a rerun reproduces the original results
 

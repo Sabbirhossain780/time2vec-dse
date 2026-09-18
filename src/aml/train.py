@@ -47,9 +47,12 @@ def train_sector_models(sectors, processed_data_dict: Dict, scalers: Dict, model
         Xtr, ytr, Xv, yv, Xte, yte = ts_split(X, y, TRAIN_RATIO, VAL_RATIO)
         last_closes_test = last_closes[len(ytr) + len(yv):]
 
+        steps_per_epoch = max(1, len(Xtr) // batch_size)
+
         for model_type in model_types:
             logger.info("--- %s | %s ---", model_type, sector)
-            model = build_model_by_name(model_type, seq_len, n_feats)
+            model = build_model_by_name(model_type, seq_len, n_feats,
+                                         steps_per_epoch=steps_per_epoch, total_epochs=epochs)
             hist = model.fit(
                 Xtr, ytr, validation_data=(Xv, yv),
                 epochs=epochs, batch_size=batch_size, verbose=1,
@@ -110,10 +113,12 @@ def train_overall_models(sectors, processed_data_dict: Dict, models_dir: Path,
 
     model_histories_overall = {}
     all_results_overall = {}
+    steps_per_epoch_all = max(1, len(Xtr_all) // batch_size)
 
     for model_type in model_types:
         logger.info("=== OVERALL %s ===", model_type)
-        model = build_model_by_name(model_type, seq_len_all, n_feats_all)
+        model = build_model_by_name(model_type, seq_len_all, n_feats_all,
+                                     steps_per_epoch=steps_per_epoch_all, total_epochs=epochs)
         hist = model.fit(
             Xtr_all, ytr_all, validation_data=(Xv_all, yv_all),
             epochs=epochs, batch_size=batch_size, verbose=1,

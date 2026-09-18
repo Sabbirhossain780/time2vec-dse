@@ -70,6 +70,65 @@ def build_transformer_model(seq_length=SEQ_LEN, n_features=len(FEATURES),
     return model
 
 
+def build_transformer_model_v2(seq_length=SEQ_LEN, n_features=len(FEATURES),
+                                d_model=32, n_heads=2, d_ff=64, dropout=0.1, lr=1e-3,
+                                steps_per_epoch=None, total_epochs=None, warmup_epochs=5):
+    """Same architecture as build_transformer_model, with two targeted fixes
+    for the instability/underperformance diagnosed via the multi-seed sweep
+    (see README "Why isn't the Transformer working?"):
+
+    1. Mean pooling over all 8 timesteps instead of reading out only the last
+       position -- the original head discarded most of what self-attention
+       computed for positions t-8..t-2; they only reached the prediction
+       insofar as they shaped position t-1's representation via attention.
+    2. A linear warmup + cosine decay learning rate schedule instead of flat
+       Adam -- vanilla Adam with no warmup is a known source of Transformer
+       training instability, which is consistent with this model's ~4x
+       higher run-to-run variance than LSTM's in the multi-seed sweep.
+    """
+    inputs = layers.Input(shape=(seq_length, n_features), name="sequence_input")
+
+    t2v = Time2Vec(kernel_size=1)(inputs)
+    feat_proj = layers.Dense(d_model, name="feature_projection")(inputs)
+    time_proj = layers.Dense(d_model, name="time_projection")(t2v)
+    x = layers.Add(name="feature_time_fusion")([feat_proj, time_proj])
+
+    positions = tf.range(start=0, limit=seq_length, delta=1)
+    pos_emb = layers.Embedding(input_dim=seq_length, output_dim=d_model, name="pos_encoding")(positions)
+    pos_emb = tf.expand_dims(pos_emb, axis=0)
+    x = layers.Add(name="add_pos_encoding")([x, pos_emb])
+
+    x_norm = layers.LayerNormalization(epsilon=1e-6, name="ln_pre_attn")(x)
+    attn = layers.MultiHeadAttention(num_heads=n_heads, key_dim=d_model, name="mha")(x_norm, x_norm)
+    x = layers.Add(name="resid_attn")([x, layers.Dropout(dropout)(attn)])
+
+    x_norm = layers.LayerNormalization(epsilon=1e-6, name="ln_pre_ffn")(x)
+    ffn = layers.Dense(d_ff, activation="gelu", name="ffn1")(x_norm)
+    ffn = layers.Dense(d_model, name="ffn2")(ffn)
+    x = layers.Add(name="resid_ffn")([x, layers.Dropout(dropout)(ffn)])
+
+    x_pooled = layers.GlobalAveragePooling1D(name="mean_pool")(x)
+    x_pooled = layers.Dense(32, activation="relu")(x_pooled)
+    x_pooled = layers.Dropout(0.1)(x_pooled)
+    outputs = layers.Dense(1, name="out")(x_pooled)
+
+    model = models.Model(inputs, outputs, name="Transformer_Stock_V2")
+
+    if steps_per_epoch and total_epochs:
+        warmup_steps = max(1, warmup_epochs * steps_per_epoch)
+        total_steps = max(warmup_steps + 1, total_epochs * steps_per_epoch)
+        lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=0.0, decay_steps=total_steps - warmup_steps,
+            alpha=0.1, warmup_target=lr, warmup_steps=warmup_steps,
+        )
+        optimizer = tf.keras.optimizers.Adam(lr_schedule)
+    else:
+        optimizer = tf.keras.optimizers.Adam(lr)
+
+    model.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
+    return model
+
+
 def build_lstm_model(seq_length=SEQ_LEN, n_features=len(FEATURES), lstm_units=64, dropout=0.1, lr=1e-3):
     model = models.Sequential(name="LSTM_Stock")
     model.add(layers.Input(shape=(seq_length, n_features)))
@@ -92,9 +151,13 @@ def build_rnn_model(seq_length=SEQ_LEN, n_features=len(FEATURES), rnn_units=64, 
     return model
 
 
-def build_model_by_name(name: str, seq_len: int, n_feats: int):
+def build_model_by_name(name: str, seq_len: int, n_feats: int,
+                         steps_per_epoch: int = None, total_epochs: int = None):
     if name == "Transformer":
         return build_transformer_model(seq_len, n_feats)
+    if name == "TransformerV2":
+        return build_transformer_model_v2(seq_len, n_feats, steps_per_epoch=steps_per_epoch,
+                                           total_epochs=total_epochs)
     if name == "LSTM":
         return build_lstm_model(seq_len, n_feats)
     if name == "RNN":
