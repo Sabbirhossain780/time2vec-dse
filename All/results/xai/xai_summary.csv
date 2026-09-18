@@ -1,0 +1,16 @@
+Model,Sector,TopTime_IG,TopFeat_IG,TopTime_SHAP,TopFeat_SHAP,TopTime_Occlusion,TopFeat_Occlusion
+LSTM,Engineering,,,,,t-1,close
+LSTM,Fuel & Power,,,,,t-1,high
+LSTM,IT Sector,,,,,t-1,open
+LSTM,Services & Real Estate,,,,,t-2,open
+LSTM,Telecommunication,,,,,t-2,low
+RNN,Engineering,,,,,t-1,low
+RNN,Fuel & Power,,,,,t-1,high
+RNN,IT Sector,,,,,t-1,low
+RNN,Services & Real Estate,,,,,t-2,low
+RNN,Telecommunication,,,,,t-2,low
+Transformer,Engineering,,,,,t-1,high
+Transformer,Fuel & Power,,,,,t-1,close
+Transformer,IT Sector,,,,,t-1,high
+Transformer,Services & Real Estate,,,,,t-1,high
+Transformer,Telecommunication,,,,,t-1,high
