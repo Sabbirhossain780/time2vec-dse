@@ -1,4 +1,4 @@
-# DSE Sector Return Prediction: RNN / LSTM / Transformer
+# Time2Vec-Enhanced Transformer for Sector-Wise Return Forecasting on the Dhaka Stock Exchange
 
 Predicts next-day return (and reconstructed closing price) per Dhaka Stock
 Exchange sector using RNN, LSTM, and a small Time2Vec Transformer, trained
