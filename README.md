@@ -81,6 +81,51 @@ Exact numeric match isn't guaranteed (Keras/TF ops aren't bit-deterministic
 across versions/hardware even with a fixed seed), but shape and ballpark
 metrics should agree closely.
 
+## GPU training (WSL2)
+
+`pip install tensorflow` on native Windows has been CPU-only since TF 2.11
+(Google's own decision, not a local misconfiguration). To use an NVIDIA GPU on
+Windows, run this project inside WSL2 instead:
+
+```bash
+# One-time setup, from a Windows shell (skip if WSL2 + a distro already exists):
+wsl --install
+
+# Inside the WSL distro (e.g. Ubuntu):
+curl -LsSf https://astral.sh/uv/install.sh | sh   # prebuilt Python binaries, no compiling
+source $HOME/.local/bin/env
+uv python install 3.12                            # match a Python version TF actually ships wheels for
+uv venv ~/venvs/aml-gpu --python 3.12
+cd /mnt/<drive>/AML                                 # this project, via the Windows-drive mount
+uv pip install --python ~/venvs/aml-gpu -r requirements.txt "tensorflow[and-cuda]"
+```
+
+`tensorflow[and-cuda]` pulls matching CUDA/cuDNN as regular pip packages, so
+no manual system-wide CUDA toolkit install is needed inside WSL. It relies on
+the Windows NVIDIA driver via WSL2 GPU passthrough (`/usr/lib/wsl/lib`),
+which is already there if `nvidia-smi` works on the Windows side.
+
+**Known papercut on some distro/glibc combinations:** TensorFlow's RPATH-based
+auto-discovery of the pip-installed CUDA libraries can fail to register the
+GPU (`tf.config.list_physical_devices('GPU')` returns `[]`) even though
+everything installed correctly. Fix: point `LD_LIBRARY_PATH` at the installed
+`nvidia-*` package lib dirs. Bake it into the venv so it's automatic on every
+`source ~/venvs/aml-gpu/bin/activate`:
+
+```bash
+V=~/venvs/aml-gpu
+LIBDIRS=$(find "$V/lib/python3.12/site-packages/nvidia" -maxdepth 2 -type d -name lib | tr '\n' ':')
+echo "export LD_LIBRARY_PATH=\"${LIBDIRS}\${LD_LIBRARY_PATH:-}\"" >> "$V/bin/activate"
+```
+
+Then run the pipeline as usual, from inside the activated venv:
+
+```bash
+source ~/venvs/aml-gpu/bin/activate
+cd /mnt/<drive>/AML
+python run_pipeline.py all --smoke-test   # verify: look for "Created device .../GPU:0" in the log
+```
+
 ## Known gaps / honest caveats
 
 - **XAI is a fresh reimplementation, not a byte-for-byte reproduction.** No
