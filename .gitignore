@@ -1,0 +1,13 @@
+# Generated pipeline outputs (regenerate with run_pipeline.py)
+outputs/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
