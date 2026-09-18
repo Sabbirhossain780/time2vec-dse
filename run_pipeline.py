@@ -23,9 +23,15 @@ Classical baselines (naive persistence + ARIMA), merged with the trained-model
 comparison table if it already exists:
     python run_pipeline.py baselines
 
-Multi-seed robustness sweep (retrains per-sector models under several seeds,
-no models persisted, only metrics -- check whether the single-seed results hold):
-    python run_pipeline.py multiseed --seeds 42 7 123 2024 8675309
+Multi-seed robustness sweep -- run ONE seed per process invocation (each
+seed saves durably to outputs/results/multiseed_seed_<seed>.csv immediately,
+so a crash on one seed doesn't lose the others), then merge:
+    python run_pipeline.py multiseed --seed 42
+    python run_pipeline.py multiseed --seed 7
+    python run_pipeline.py multiseed --seed 123
+    python run_pipeline.py multiseed --seed 2024
+    python run_pipeline.py multiseed --seed 8675309
+    python run_pipeline.py multiseed-merge
 """
 from __future__ import annotations
 
@@ -44,10 +50,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=[
         "all", "prep-data", "preprocess", "train", "evaluate", "visualize", "xai", "realworld",
-        "baselines", "multiseed",
+        "baselines", "multiseed", "multiseed-merge",
     ])
+    parser.add_argument("--seed", type=int, default=None,
+                         help="Seed for the 'multiseed' stage (one seed per invocation).")
     parser.add_argument("--seeds", type=int, nargs="+", default=None,
-                         help="Seeds for the 'multiseed' stage (default: 42 7 123 2024 8675309).")
+                         help="Seeds for 'multiseed-merge' (default: 42 7 123 2024 8675309).")
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--models", nargs="+", default=MODEL_TYPES, choices=MODEL_TYPES,
@@ -108,8 +116,12 @@ def main():
     elif args.stage == "baselines":
         pipeline.stage_baselines(state)
     elif args.stage == "multiseed":
-        pipeline.stage_multiseed(state, seeds=args.seeds, model_types=args.models,
-                                  epochs=epochs, batch_size=args.batch_size)
+        if args.seed is None:
+            parser.error("--seed is required for the 'multiseed' stage (one seed per invocation)")
+        pipeline.stage_multiseed_single(state, seed=args.seed, model_types=args.models,
+                                         epochs=epochs, batch_size=args.batch_size)
+    elif args.stage == "multiseed-merge":
+        pipeline.stage_multiseed_merge(state, seeds=args.seeds)
 
 
 if __name__ == "__main__":

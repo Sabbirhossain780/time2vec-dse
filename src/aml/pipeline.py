@@ -141,14 +141,19 @@ def stage_baselines(state: PipelineState):
                                     state.scalers, state.paths.results_dir)
 
 
-def stage_multiseed(state: PipelineState, seeds=None, model_types=MODEL_TYPES,
-                     epochs=EPOCHS, batch_size=BATCH_SIZE):
-    """Retrain per-sector models under several seeds to check the single-seed
-    results are robust. Also computes the naive baseline (deterministic) so
-    each seed's result can be checked against it."""
-    df_sweep = multiseed.run_multiseed_sweep(
-        state.sectors, state.processed_data_dict, state.scalers, state.paths.results_dir,
-        model_types=model_types, seeds=seeds, epochs=epochs, batch_size=batch_size)
+def stage_multiseed_single(state: PipelineState, seed: int, model_types=MODEL_TYPES,
+                            epochs=EPOCHS, batch_size=BATCH_SIZE):
+    """Train one seed's worth of per-sector models and save it durably. Meant
+    to be invoked as its own OS process per seed -- see multiseed.py."""
+    return multiseed.run_single_seed(
+        seed, state.sectors, state.processed_data_dict, state.scalers, state.paths.results_dir,
+        model_types=model_types, epochs=epochs, batch_size=batch_size)
+
+
+def stage_multiseed_merge(state: PipelineState, seeds=None):
+    """Merge whichever multiseed_seed_<seed>.csv files exist and summarize
+    against the (deterministic) naive baseline."""
+    df_sweep = multiseed.merge_multiseed_results(state.paths.results_dir, seeds=seeds)
     naive_df = baselines.naive_persistence_baseline(state.sectors, state.processed_data_dict, state.scalers)
     summary = multiseed.summarize_multiseed(df_sweep, naive_df)
     summary_path = state.paths.results_dir / "multiseed_summary.csv"

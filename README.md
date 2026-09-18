@@ -60,74 +60,80 @@ LSTM), despite having comparable or more trainable parameters and a strictly
 richer architecture (attention + learned time embedding vs. a single
 recurrent gate).
 
-### Per-sector comparison, against a naive baseline and ARIMA
+### Per-sector comparison, against a naive baseline and ARIMA -- checked across 5 seeds
 
 The single most important sanity check missing from most retail stock-return
-projects — including, to be clear, earlier versions of this one — is:
-**does the model actually beat "predict no change," and does it beat a
-plain classical model?** Two baselines are computed here, both using the
-exact same preprocessing, scaler, and chronological test split as the
-trained models so the comparison is apples-to-apples: a persistence baseline
-(tomorrow's close = today's close, i.e. predicted return = 0), and a
-per-sector ARIMA model (order selected by AIC grid search on train+val,
-evaluated with walk-forward one-step forecasts through the test window --
-see `src/aml/baselines.py`; reproduce with `python run_pipeline.py
-baselines`). RMSE is shown as a percentage of the sector's *test-window*
-mean closing price, so sectors at very different price levels (IT Sector
-~52, Fuel & Power ~257 in the test window) are comparable.
+projects — including, to be clear, earlier versions of this one — is: does
+the model beat "predict no change"? Does it beat a plain classical model?
+And does the answer hold up, or was it one lucky weight initialization?
+All three questions are answered here.
 
-> **Correction, for transparency:** an earlier version of this table used
-> the sector's *full-series* mean price to normalize the trained models but
-> the *test-window* mean price to normalize the naive baseline -- two
-> different denominators for the same comparison. For most sectors this
-> barely mattered, but for IT Sector the two means differ by ~34% (the
-> series trended up into the test window), which was enough to flip several
-> "beats naive" verdicts below. The percentages and verdicts here now use
-> one consistent denominator (test-window mean price) throughout; the
-> underlying RMSE/MAE numbers were never wrong, only how they'd been
-> normalized for display.
+Two baselines, both using the exact same preprocessing, scaler, and
+chronological test split as the trained models: a persistence baseline
+(tomorrow's close = today's close), and a per-sector ARIMA model (order
+selected by AIC grid search on train+val, evaluated with walk-forward
+one-step forecasts through the test window -- `src/aml/baselines.py`,
+`python run_pipeline.py baselines`). Both are deterministic given the data,
+so they're reported as a single number. RNN/LSTM/Transformer are **not**
+deterministic -- each was retrained from scratch under 5 different seeds
+(42, 7, 123, 2024, 8675309; `src/aml/multiseed.py`, `python run_pipeline.py
+multiseed --seed <n>` x5 then `multiseed-merge`), reported as mean ± std
+RMSE across those 5 runs, with "beats naive" as a fraction (e.g. "5/5" means
+every seed's model beat the naive baseline on that sector; "0/5" means none
+did). All RMSE in actual price units on the test window.
 
-| Sector | Naive | ARIMA | LSTM | RNN | Transformer |
+> **Correction, for transparency:** an earlier version of this table
+> normalized the naive baseline's RMSE and the trained models' RMSE by two
+> different mean prices before converting to percentages (full-series vs.
+> test-window), which flipped several verdicts -- most notably making IT
+> Sector look artificially hard. Verdicts here are based on raw RMSE
+> (same units, same test window for every model), which doesn't depend on
+> any normalization choice.
+
+| Sector | Naive | ARIMA | LSTM (mean±std, beats) | RNN (mean±std, beats) | Transformer (mean±std, beats) |
 |---|---|---|---|---|---|
-| Engineering | 0.76 | 0.52 ✓ | 0.55 ✓ | 0.58 ✓ | 1.48 ✗ |
-| Fuel & Power | 0.94 | **0.50** ✓ | 0.60 ✓ | 0.55 ✓ | 0.66 ✓ |
-| IT Sector | 0.58 | **0.51** ✓ | 0.52 ✓ | 0.60 ✗ | 0.55 ✓ |
-| Services & Real Estate | 0.85 | 1.21 ✗ | **0.75** ✓ | 1.20 ✗ | 1.41 ✗ |
-| Telecommunication | 0.61 | 0.57 ✓ | **0.55** ✓ | 0.57 ✓ | 1.10 ✗ |
-| **Mean across sectors** | 0.75 | 0.66 | **0.59** | 0.70 | 1.04 |
+| Engineering | 1.067 | 0.740 (✓) | 0.81±0.04 (5/5) | 0.86±0.05 (5/5) | 1.29±0.30 (2/5) |
+| Fuel & Power | 2.411 | 1.270 (✓) | 1.66±0.06 (5/5) | 1.55±0.22 (5/5) | 2.29±0.14 (4/5) |
+| IT Sector | 0.303 | 0.267 (✓) | 0.27±0.00 (5/5) | 0.29±0.02 (4/5) | 0.29±0.01 (4/5) |
+| Services & Real Estate | 0.449 | 0.640 (✗) | 0.47±0.08 (4/5) | 0.63±0.11 (0/5) | 0.88±0.27 (0/5) |
+| Telecommunication | 1.230 | 1.143 (✓) | 1.12±0.01 (5/5) | 1.14±0.02 (5/5) | 1.40±0.11 (0/5) |
 
-✓ = beats the naive baseline on this sector (compared on raw RMSE, not the
-rounded percentages above), ✗ = does not. Bold = best model for that row.
-**What actually holds up after the correction:**
+**What survives the robustness check, and what doesn't:**
 
-- **LSTM beats the naive baseline in all 5/5 sectors** — the only model
-  that does. That's a materially different (and more favorable) result than
-  the previous version of this README claimed for it.
-- **ARIMA — a classical model with no training, no GPU, and an
-  AIC-selected order per sector — is the single best model in 3 of 5
-  sectors** (Engineering, Fuel & Power, IT Sector) and beats naive in 4/5.
-  It also has the second-best mean relative RMSE, ahead of both RNN and the
-  Transformer. Before crediting any deep-learning result here, it has to
-  clear this bar, and for most sectors it barely does.
-- **Services & Real Estate is the one sector nothing but LSTM can beat.**
-  Naive, ARIMA, RNN, and the Transformer all lose to "predict no change"
-  there. IT Sector, previously (incorrectly) reported as similarly
-  unpredictable, turns out to be beatable by 3 of the 4 real models
-  (ARIMA, LSTM, Transformer) once measured correctly — only RNN misses it.
-- **The Transformer is still the weakest model** — worst mean relative
-  RMSE by a wide margin (1.04% vs. LSTM's 0.59%), and it beats naive in
-  only 2/5 sectors, both against the classical baselines here. Likely
-  reasons, roughly in order of suspicion: each sector's training set is
-  small (~800 sequences, ~85 test rows) for a multi-head-attention model to
-  fit reliably without more aggressive regularization than was used here;
-  `SEQ_LEN=8` gives self-attention little room to do anything a recurrent
-  gate or ARIMA's own autoregressive terms can't; and the "take the last
-  position" pooling head discards most of the attention output before it
-  ever reaches the prediction.
-- Absolute RMSE numbers (0.5-1.5% of test-window mean price) look small in
-  isolation and would look "impressive" in a report that omitted both
-  baseline rows. With them included, ARIMA alone beats every neural model
-  in mean relative RMSE except LSTM.
+- **LSTM's headline result softens but mostly holds.** It's robustly better
+  than naive (5/5 seeds) in 4 of 5 sectors. In Services & Real Estate,
+  though, it only beat naive in 4/5 seeds, and its *mean* RMSE (0.47) is
+  actually slightly worse than naive (0.449) — the single-seed run that
+  originally "confirmed" LSTM beats naive everywhere was, on this one
+  sector, closer to a coin flip than a real edge.
+- **RNN is a genuine mixed bag, and consistently so.** Robust (5/5) in the
+  same 3 sectors as LSTM (Engineering, Fuel & Power, Telecommunication), but
+  it lost to naive in **every single one** of the 5 seeds in Services &
+  Real Estate (0/5) — not noise, a consistent failure.
+- **The Transformer is both the weakest model and by far the least
+  reproducible one.** Averaged across sectors, its run-to-run standard
+  deviation (0.165 RMSE units) is **~4x LSTM's (0.040) and ~2x RNN's
+  (0.084)**. That instability is itself a finding, separate from accuracy:
+  in Engineering, the original single-seed run showed the Transformer
+  clearly losing to naive — but across 5 seeds it actually *beats* naive
+  40% of the time, meaning that single run wasn't even a reliable
+  description of the Transformer's own typical behavior, let alone a fair
+  comparison to the other models. It never beat naive, in any of the 5
+  seeds, in Services & Real Estate or Telecommunication.
+- **Services & Real Estate is now solidly confirmed as the hard sector for
+  everyone** — RNN and the Transformer lose to naive in all 5 seeds each,
+  ARIMA loses outright, and even LSTM's edge there is marginal at best.
+  This is a much stronger claim than the single-run version could support.
+- **ARIMA remains competitive** — best single model in 3/5 sectors, still
+  with zero training and no variance to worry about, though it's now being
+  compared against *distributions*, not point estimates, for the neural
+  models.
+
+The practical lesson, independent of any specific number: **a single
+training run of a small neural network on a small per-sector financial
+dataset is not a reliable basis for a "beats baseline" claim.** Several of
+this project's own earlier verdicts (in an earlier version of this
+README) would not have survived this check.
 
 ### What the XAI stage found
 
@@ -153,21 +159,28 @@ this is a reimplementation, not a reproduction of the original numbers):
 
 ### Reproducibility caveat (read before citing any of this)
 
-This is a **single seed, single run**. Keras/TF training is not
-bit-deterministic across hardware/backends even with a fixed seed (see
-[Checking a rerun reproduces the original
-results](#checking-a-rerun-reproduces-the-original-results) — a from-scratch
-GPU rerun of this pipeline landed within ~5-15% of the archived original run
-on every headline metric, which is the kind of spread you should expect
-between any two runs, not just this one vs. the original). None of the
-per-sector "beats naive" verdicts above are far enough from their baseline
-to survive being called robust off a single run — treat the *pattern*
-(LSTM is the only model that's robust across all 5 sectors, ARIMA is a
-strong second, the Transformer is consistently the weakest, Services & Real
-Estate is hard for everyone but LSTM) as the finding, not any individual
-decimal. A real paper-grade claim here would average over several seeds per
-(model, sector) cell before reporting a number — which is the planned next
-step for this repo.
+The **per-sector RNN/LSTM/Transformer comparison is now checked across 5
+seeds** (see above) -- that part of this README is no longer a single-run
+claim. What's still single-run / not seed-swept:
+
+- The **pooled OVERALL comparison** (normalized-return MSE/MAE table,
+  above) -- only one seed per model.
+- **ARIMA and the naive baseline** -- deterministic given the data, so
+  there's no seed to vary; their only source of run-to-run variation would
+  be a different train/test split or different raw data.
+- The **XAI results** (occlusion sensitivity, integrated gradients) --
+  computed once, against the seed-42 models specifically.
+
+Keras/TF training is also not bit-deterministic across hardware/backends
+even with a fixed seed (see [Checking a rerun reproduces the original
+results](#checking-a-rerun-reproduces-the-original-results) — a
+from-scratch GPU rerun of the full pipeline landed within ~5-15% of the
+archived original run on every headline metric). 5 seeds is enough to
+distinguish "robust pattern" from "one-run fluke" (which is what it was
+used for above) but is not enough for a tight confidence interval on any
+individual number -- a paper-grade claim would want more seeds, and would
+also sweep the pooled OVERALL models and re-run XAI per seed rather than
+against one arbitrarily-chosen model instance.
 
 ## Folder structure
 
@@ -221,6 +234,10 @@ python run_pipeline.py visualize               # outputs/figures
 python run_pipeline.py xai                     # outputs/results/xai
 python run_pipeline.py baselines               # outputs/results/baselines_comparison.csv (naive + ARIMA)
 python run_pipeline.py realworld --input new.csv   # score saved models against fresh data
+
+# Multi-seed robustness check: one seed per invocation (each saves durably), then merge
+python run_pipeline.py multiseed --seed 42   # ...repeat for 7, 123, 2024, 8675309 (or your own seeds)
+python run_pipeline.py multiseed-merge       # outputs/results/multiseed_comparison.csv + _summary.csv
 ```
 
 Useful flags: `--models Transformer LSTM` (subset), `--epochs`, `--batch-size`,
