@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-from .config import RET_COLS
+from .config import EMBARGO, RET_COLS
 
 
 def ensure_targets_column(y):
@@ -14,17 +14,35 @@ def ensure_targets_column(y):
     return y.reshape(-1, 1) if y.ndim == 1 else y
 
 
-def ts_split(X, y, train_ratio=0.8, val_ratio=0.1):
+def ts_split(X, y, train_ratio=0.8, val_ratio=0.1, embargo=EMBARGO):
+    """Chronological 3-way split with an embargo gap at each boundary.
+
+    Split points are computed on the full length so the test window matches
+    the un-embargoed version; the embargo is taken out of the *end* of the
+    train and validation blocks, discarding samples whose labels overlap the
+    next block's."""
     n = X.shape[0]
     n_train = max(1, int(n * train_ratio))
     n_val = max(1, int(n * val_ratio))
-    n_test = max(1, n - n_train - n_val)
-    if n_train + n_val + n_test > n:
-        n_test = max(1, n - n_train - n_val)
-    Xtr, ytr = X[:n_train], y[:n_train]
-    Xv, yv = X[n_train:n_train + n_val], y[n_train:n_train + n_val]
-    Xte, yte = X[n_train + n_val:], y[n_train + n_val:]
+
+    tr_end = max(1, n_train - embargo)
+    v_start, v_end = n_train, max(n_train + 1, n_train + n_val - embargo)
+    te_start = n_train + n_val
+
+    Xtr, ytr = X[:tr_end], y[:tr_end]
+    Xv, yv = X[v_start:v_end], y[v_start:v_end]
+    Xte, yte = X[te_start:], y[te_start:]
     return Xtr, ytr, Xv, yv, Xte, yte
+
+
+def test_start_index(n: int, train_ratio=0.8, val_ratio=0.1) -> int:
+    """Index where the test block begins, matching ts_split.
+
+    Deliberately independent of the embargo: the embargo shortens the train
+    and validation blocks, it never moves the test window. Anything aligned
+    to the sample axis (e.g. `last_closes`) must be sliced with this rather
+    than inferred from len(train) + len(val)."""
+    return max(1, int(n * train_ratio)) + max(1, int(n * val_ratio))
 
 
 def invert_close_only(scaler, arr_norm_1d, ret_cols=RET_COLS):

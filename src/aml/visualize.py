@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from .config import RET_COLS
-from .utils import invert_close_only, load_model_for_inference, model_path_for, ts_split
+from .utils import test_start_index, invert_close_only, load_model_for_inference, model_path_for, ts_split
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def _sector_split_again(sector, processed_data_dict, scalers):
     X = pack["X"]
     y = pack["y"].reshape(-1, 1) if np.ndim(pack["y"]) == 1 else pack["y"]
     Xtr, ytr, Xv, yv, Xte, yte = ts_split(X, y, 0.8, 0.1)
-    last_closes_test = pack["last_closes"][len(ytr) + len(yv):]
+    last_closes_test = pack["last_closes"][test_start_index(len(y)):]
     return Xtr, ytr, Xv, yv, Xte, yte, last_closes_test, scalers[sector]
 
 

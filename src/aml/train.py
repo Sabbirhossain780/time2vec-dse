@@ -15,7 +15,7 @@ from tensorflow.keras import callbacks
 
 from .config import BATCH_SIZE, EARLY_STOP_PATIENCE, EPOCHS, MODEL_TYPES, RET_COLS, TRAIN_RATIO, VAL_RATIO
 from .models import build_model_by_name
-from .utils import ensure_targets_column, invert_close_only, model_path_for, ts_split
+from .utils import ensure_targets_column, invert_close_only, model_path_for, test_start_index, ts_split
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def train_sector_models(sectors, processed_data_dict: Dict, scalers: Dict, model
         seq_len, n_feats = X.shape[1], X.shape[2]
 
         Xtr, ytr, Xv, yv, Xte, yte = ts_split(X, y, TRAIN_RATIO, VAL_RATIO)
-        last_closes_test = last_closes[len(ytr) + len(yv):]
+        last_closes_test = last_closes[test_start_index(len(y), TRAIN_RATIO, VAL_RATIO):]
 
         steps_per_epoch = max(1, len(Xtr) // batch_size)
 
