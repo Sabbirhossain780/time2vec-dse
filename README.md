@@ -1,55 +1,68 @@
 # Time2Vec-Enhanced Transformer for Sector-Wise Return Forecasting on the Dhaka Stock Exchange
 
-A reproducible pipeline that forecasts next-day sector returns on the Dhaka
-Stock Exchange with a SimpleRNN, an LSTM, and a small Time2Vec Transformer,
-plus classical baselines and occlusion/integrated-gradients explainability.
-Originally a set of Colab notebooks; now a scripted pipeline that rebuilds
-every published number from the raw workbook.
+This repository has two parts.
 
-**What this found:**
+**Part 1** is the project as it was planned: take five sectors of the Dhaka
+Stock Exchange, and try to predict the next day's return with three neural
+networks — a SimpleRNN, an LSTM, and a small Transformer using a Time2Vec
+time embedding. Compare them against each other and against classical
+baselines.
 
-- The Transformer loses to the LSTM, to ARIMA, and often to "predict no
-  change." That result is stable across 5 seeds.
-- The reason is not tuning. Inside this architecture the attention block is
-  measurably inert, and the layer named `Time2Vec` does not encode time.
-- The Transformer's mean RMSE (1.091) is indistinguishable from predicting
-  no change at all (1.092), and it beats that baseline in 12 of 25
-  seed x sector cells — a coin flip.
-- Five repair attempts — mean pooling, LR warmup/decay, a trainable
-  positional embedding, removing Time2Vec, and implementing Time2Vec
-  correctly — all failed. So did replacing self-attention with a fixed
-  uniform average, which performs no differently from keeping it.
-- Read [Limitations](#limitations) before citing anything here. This is one
-  market, four years, and roughly ten model variants scored against a single
-  test split. It is exploratory, not confirmatory.
+**Part 2** is what happened when the Transformer didn't work. Rather than
+keep tuning it, we took it apart and measured what its components were
+actually doing. Most of them were doing nothing, for reasons that don't show
+up in any accuracy table.
 
-## Method
+Both parts are here, with the code to reproduce them.
 
-Each sector's daily OHLCV series is smoothed with a 10-day moving average,
-differenced into returns, and MinMax-scaled. An 8-day window of the 5 scaled
-return features predicts the next day's `return_close`, many-to-one.
-Predictions are inverted through the sector's scaler and added to the last
-known close, so the reported RMSE/MAE are in price units.
+---
 
-Split is 80/10/10 chronological, no shuffling, with a 10-sample embargo at
-each boundary (see [Protocol corrections](#protocol-corrections)). Training is
-50 epochs of Adam with early stopping on validation loss (patience 5).
-Every model is trained per-sector; the three core models are also trained
-pooled across sectors (`OVERALL`).
+# Part 1 — Forecasting DSE sector returns
 
-Architectures: `SimpleRNN`; `LSTM`; and a Transformer encoder with a
-Time2Vec embedding fused into a linear feature projection, one multi-head
-self-attention block (`d_model=32`, 2 heads, `d_ff=64`, pre-LN), and a
-take-last-position head. Baselines are naive persistence (predict zero
-return) and ARIMA with an AIC grid search over `p,q ∈ 0..3`, `d ∈ {0,1}`
-fitted on train+validation and walk-forward one-step forecast.
+## The data and the setup
+
+Daily open/high/low/close/volume figures for five DSE sectors — Engineering,
+Fuel & Power, IT, Services & Real Estate, and Telecommunication — covering
+2017 to 2021. After cleaning, 4,270 rows, rebuilt from the raw workbook by
+the pipeline in this repo (`data/raw/DSE-2017 to 2021.csv.xlsx`). 2019 is
+missing, because that year's sheet in the source workbook uses a different
+column layout; this matches the original study and is documented under
+[Data lineage](#data-lineage).
+
+Each sector's prices are smoothed with a 10-day moving average, then
+differenced into returns, then scaled. The model sees 8 days of those five
+return features and predicts the next day's close return. The prediction is
+converted back to a price by adding it to the last known close, so all the
+error figures below are in the same units as the share prices.
+
+Data is split 80/10/10 in time order — train on the earliest stretch,
+validate on the middle, test on the most recent. No shuffling, because
+shuffling a time series lets the model see the future. That leaves roughly
+670 training rows per sector, which is a small dataset by any standard.
+
+## The models
+
+- **SimpleRNN** and **LSTM** — standard recurrent networks.
+- **Transformer** — a small encoder: a Time2Vec embedding added to a linear
+  projection of the features, one multi-head self-attention block
+  (`d_model=32`, 2 heads), and a head that reads the last position.
+- **Naive baseline** — predict no change. Tomorrow equals today.
+- **ARIMA** — a classical statistical model, order chosen by AIC search,
+  refit walk-forward one step at a time.
+
+The naive baseline matters more than it sounds. A lot of stock-prediction
+results look impressive until you check whether they beat "assume nothing
+changes," and many don't.
+
+Every model was trained five times with different random starting weights
+(seeds 42, 7, 123, 2024, 8675309), across all five sectors. That's 25
+independent results per model, so a single lucky run can't carry a
+conclusion.
 
 ## Results
 
-Every number below comes from a single sweep: 8 model variants × 5 sectors ×
-5 seeds (42, 7, 123, 2024, 8675309), all trained back-to-back in one process
-per seed so the RNG call sequence is identical across variants. RMSE is in
-price units.
+Lower RMSE is better. "Beats naive" counts how many of the 25 seed × sector
+runs came in under the naive baseline.
 
 | Model | Mean RMSE | Run-to-run std | Beats naive |
 |---|---|---|---|
@@ -64,6 +77,8 @@ price units.
 | TransformerV2 | 1.223 | 0.196 | 9/25 |
 | TransformerV3 | 1.239 | 0.213 | 12/25 |
 
+Per sector, for the three original models:
+
 | Sector | Naive | ARIMA | RNN | LSTM | Transformer |
 |---|---|---|---|---|---|
 | Engineering | 1.067 | 0.740 | 0.979 ± 0.066 (4/5) | 0.792 ± 0.034 (5/5) | 0.997 ± 0.162 (2/5) |
@@ -72,41 +87,59 @@ price units.
 | Services & Real Estate | 0.449 | 0.640 | 1.050 ± 0.293 (0/5) | 0.432 ± 0.037 (3/5) | 0.755 ± 0.246 (0/5) |
 | Telecommunication | 1.230 | 1.143 | 1.101 ± 0.027 (5/5) | 1.122 ± 0.018 (5/5) | 1.581 ± 0.695 (2/5) |
 
-ARIMA has the best mean RMSE of anything here, and the LSTM is a close
-second while beating the naive baseline in 23 of 25 cells. The Transformer
-sits on top of the naive baseline: 1.091 against 1.092, winning 12 of 25
-cells. Whatever it has learned is worth approximately nothing over assuming
-tomorrow equals today.
+**What this says, plainly:**
 
-Two sector-level results are worth not glossing over. In **Services & Real
-Estate** the naive baseline beats everything, ARIMA included — the RNN and
-Transformer lose in 5 of 5 seeds. In **Fuel & Power**, the sector with the
-largest absolute errors, every model beats naive in 5 of 5 seeds, so the
-picture is not uniform across sectors.
+ARIMA — the oldest and simplest method here — has the lowest average error.
+The LSTM is close behind and is the most dependable of the neural models,
+beating the naive baseline in 23 of 25 runs.
 
-The Transformer's run-to-run standard deviation is 0.273 against the LSTM's
-0.040 — roughly seven times larger. That is a reliability finding
-independent of accuracy: same architecture, same data, a different seed, and
-it lands somewhere materially different. Telecommunication is the worst case
-at ±0.695 on a mean of 1.581.
+The Transformer does not work. Its average error is 1.091; the naive
+baseline's is 1.092. It beats "assume nothing changes" in 12 of 25 runs,
+which is a coin flip. It is also unstable: retrain it with a different
+random seed and the error moves by ±0.273 on average, about seven times the
+LSTM's ±0.040. In Telecommunication it swings by ±0.695 on a mean of 1.581.
 
-## Why the Transformer underperforms
+Two sectors are worth noting. In **Services & Real Estate**, nothing beats
+the naive baseline reliably — not even ARIMA. In **Fuel & Power**, which has
+the largest errors in absolute terms, every model beats naive in all five
+runs. The picture isn't uniform.
 
-Four measurements, each independently verifiable from the code and a trained
-model. Together they say the model is not a working Transformer that happens
-to be badly tuned — two of its three distinguishing components do nothing.
+---
 
-**1. The `Time2Vec` layer does not encode time.** It applies `sin` and a
-linear term element-wise to the five OHLCV *values* at each step
-([models.py:15](src/aml/models.py:15)). Kazemi et al. define Time2Vec on the
-time index τ. As implemented it is a per-feature nonlinear reparametrisation
-that carries no information about which timestep it is. `TimeIndexTime2Vec`
-([models.py:41](src/aml/models.py:41)) implements the paper's version for
-comparison.
+# Part 2 — Why the Transformer didn't work
 
-**2. The positional embedding never trains.** `tf.range` produces a concrete
-eager tensor, so calling `layers.Embedding` on it executes eagerly and its
-output is baked into the graph as a constant
+## First we tried to fix it
+
+The obvious explanations each got a targeted fix, and each fix got trained
+under the same five seeds and compared against the original on identical
+runs:
+
+| Variant | What changed | Mean RMSE | vs original | Wins (paired) |
+|---|---|---|---|---|
+| Transformer (original) | — | 1.091 | -- | -- |
+| TransformerV2 | mean pooling + LR warmup/decay | 1.223 | +0.132 | 7/25 |
+| TransformerV3 | positional embedding that actually trains | 1.239 | +0.148 | 10/25 |
+| TransformerUniform | self-attention replaced by a fixed average | 1.182 | +0.091 | 14/25 |
+| TransformerNoT2V | Time2Vec removed entirely | 1.152 | +0.061 | 8/25 |
+| TransformerRealT2V | Time2Vec as the paper actually defines it | 1.143 | +0.053 | 9/25 |
+
+None of them helped. Every one has a worse average than the original, and
+none is far enough from it to be distinguishable from chance.
+
+At that point, guessing at fixes clearly wasn't going to get anywhere. So
+instead of changing the model, we measured it.
+
+## What the measurements found
+
+**The Time2Vec layer doesn't encode time.** Time2Vec, as defined in the
+[original paper](https://arxiv.org/abs/1907.05321), applies a sine and a
+linear term to the *time index* — to "which step is this." The layer in this
+model ([models.py:15](src/aml/models.py:15)) applies them to the five OHLCV
+*values* instead. It's a reshuffling of the numbers that carries no
+information about position in the sequence at all. It shares a name with
+Time2Vec and not much else.
+
+**The positional embedding never trains.** Here is the line
 ([models.py:83](src/aml/models.py:83)):
 
 ```python
@@ -114,178 +147,159 @@ positions = tf.range(start=0, limit=seq_length, delta=1)
 pos_emb = layers.Embedding(input_dim=seq_length, output_dim=d_model, name="pos_encoding")(positions)
 ```
 
-`pos_encoding` is absent from `model.trainable_variables` — verified. The
-model's positional signal is therefore frozen random noise at initialization,
-measured at rms 0.029 against a content signal of rms 0.246, identical for
-every sample in the batch. This is a general Keras Functional API trap: a
-layer called on a non-symbolic tensor runs once and becomes a constant.
+`tf.range` produces an ordinary tensor with real values in it, not a
+placeholder for future input. So the `Embedding` layer runs immediately,
+once, and its random starting output gets frozen into the model as a fixed
+constant. It never becomes a trainable weight. You can check: `pos_encoding`
+does not appear in `model.trainable_variables`.
 
-**3. Attention is near-uniform and query-independent.** On a trained
-Engineering model over 85 test samples, attention weights span 0.109–0.144
-against a uniform 0.125, vary negligibly with the query position, and put
-their largest mass on `t-7` and `t-4` rather than on recent steps — which
-contradicts what occlusion says the model actually relies on.
+What that means in practice is that the model's only sense of "which day is
+which" is random noise picked at startup and never adjusted. Measured on a
+trained model, that noise has a magnitude of about 0.029 against a real
+signal of about 0.246 — roughly a tenth as loud, and identical for every
+sample.
 
-**4. Deleting the learned routing changes nothing.** `TransformerUniform`
-replaces attention with a fixed uniform average over value projections,
-dropping Q and K entirely ([models.py:130](src/aml/models.py:130)). It wins
-14 of 25 paired cells against the real attention layer — a coin flip
-(sign-test p ≈ 0.35) — while giving up 4,224 of the attention layer's 8,416
-parameters. The learned routing is not buying anything measurable.
+Nothing errors. Nothing warns. The model trains, the loss goes down, the
+metrics look plausible. This is a general trap in the Keras functional API:
+call a layer on a concrete tensor instead of a symbolic one and it silently
+becomes a constant.
 
-### Repair attempts
+**The attention layer isn't paying attention.** In a trained Engineering
+model across 85 test samples, the attention weights range from 0.109 to
+0.144. If the model were spreading attention perfectly evenly across the 8
+days, every weight would be 0.125. So it is barely distinguishable from
+doing nothing — and the weights hardly change depending on what's being
+asked, which is the one thing attention is supposed to do.
 
-Each variant is paired against the original Transformer on identical
-(seed, sector) cells from the same run. "Wins" counts cells where the
-variant's RMSE is lower, out of 25.
+Replacing the whole attention block with a plain fixed average confirms it.
+`TransformerUniform` throws away 4,224 of the attention layer's 8,416
+parameters and performs no differently — 14 wins out of 25, which is a coin
+flip.
 
-| Variant | Mean RMSE | vs original | Wins (paired) |
-|---|---|---|---|
-| Transformer (original) | 1.091 | -- | -- |
-| TransformerV2 | 1.223 | +0.132 | 7/25 |
-| TransformerV3 | 1.239 | +0.148 | 10/25 |
-| TransformerUniform | 1.182 | +0.091 | 14/25 |
-| TransformerNoT2V | 1.152 | +0.061 | 8/25 |
-| TransformerRealT2V | 1.143 | +0.053 | 9/25 |
+## What that adds up to
 
-**Not one variant beat the original on mean RMSE, and not one is
-distinguishable from it by paired sign test** (14/25 is the best result, at
-p ≈ 0.35). Read that as "none of these changed anything," not as a ranking.
+Three things are supposed to make this "a Time2Vec Transformer": the
+Time2Vec embedding, the positional encoding, and self-attention. The first
+isn't encoding time, the second is frozen noise, and the third can be
+deleted without consequence.
 
-- **`TransformerV2`** (mean pooling + linear warmup with cosine decay) cut
-  run-to-run variance from 0.273 to 0.196 but has the second-worst mean.
-  Mean pooling dilutes the recency signal take-last exploits, and occlusion
-  shows this problem is heavily recency-dominated.
-- **`TransformerV3`** (positional embedding built on a symbolic input so it
-  actually trains) has the worst mean of any variant. **This disproves the
-  obvious hypothesis** — which an earlier version of this README asserted —
-  that the frozen positional embedding explains the underperformance. The
-  frozen embedding is a genuine defect, and repairing it made things worse.
-  Something else is binding.
-- **`TransformerNoT2V`** and **`TransformerRealT2V`** respectively delete the
-  Time2Vec branch and replace it with the paper's formulation. Both land
-  within noise of the original, so the Time2Vec component is not where the
-  performance is being lost either — removing it entirely costs nothing.
-- **`TransformerUniform`** removes learned attention routing along with
-  4,224 of the attention layer's 8,416 parameters, and performs no
-  differently. Note the confound: it removes routing *and* parameters at
-  once, so "attention is useless here" and "this model is overparameterised
-  for ~670 training rows" are not separated by this ablation alone.
+So it was never really working as a Transformer. Functionally it is closer
+to a small over-parameterized network on a flattened 8-day window, with some
+noise mixed in. That explains why tuning never helped — there was nothing
+there to tune.
 
-**A result that did not replicate.** Under the earlier, leaky protocol
-`TransformerUniform` appeared to *improve* on the original (mean RMSE 1.167
-to 1.106, beats-naive 9/25 to 15/25), and an earlier version of this README
-reported that. Under the corrected protocol, with every variant re-run from
-an identical fresh RNG state, it does not: the mean is worse and the paired
-win rate is a coin flip. The weaker claim — that the learned routing
-contributes nothing measurable — survives. The stronger one did not.
+It also fits a wider pattern. [Zeng et al. (AAAI
+2023)](https://arxiv.org/abs/2205.13504) found that a simple linear model
+beats several published transformer forecasters across standard benchmarks.
+A transformer losing to an LSTM and to ARIMA on ~670 rows of one market is
+not a surprising outcome.
 
-The honest summary is that attention is not contributing on an 8-day window
-of a heavily smoothed target, and none of the standard fixes change that.
-This is consistent with the broader finding that simple linear models are
-competitive with transformer architectures on long-term forecasting
-benchmarks ([Zeng et al., AAAI 2023](https://arxiv.org/abs/2205.13504)).
+## Two things we got wrong ourselves
 
-## What the XAI stage found
+**A result of ours didn't replicate.** An earlier version of this README
+reported that removing attention *improved* the model (error 1.167 → 1.106,
+beats-naive 9/25 → 15/25). When everything was re-run under the corrected
+protocol described below, it didn't hold: the average got worse and the win
+rate came out at 14/25, indistinguishable from chance. The weaker claim —
+that the learned attention isn't contributing anything measurable —
+survives. The stronger one is withdrawn.
 
-Occlusion sensitivity and integrated gradients over the three core models ×
-5 sectors (`outputs/results/xai/xai_summary.csv`):
+**We found two data leaks in our own pipeline.** Both were inherited from
+the original notebook and both were live until recently:
 
-- **Occlusion: the most recent timestep `t-1` dominates in 14 of 15
-  (model, sector) pairs.** Only Transformer/Telecommunication picks a
-  different lag. Same story as the naive baseline from another angle — if
-  yesterday's value does most of the work, "yesterday, unchanged" is hard to
-  beat.
-- **Integrated gradients agree for LSTM and RNN** (`t-1` in all 10 cases)
-  but are scattered for the Transformer (`t-8, t-1, t-1, t-5, t-1`) —
-  independent evidence that its learned representation is less stable.
-- **No single OHLCV feature dominates.** `close`, `open`, `high` and `low`
-  each top 3–4 of the 15 pairs; `volume` tops one. Nothing here justifies
-  pruning an input feature.
+1. **The scaler was fitted on the whole series** before splitting, so the
+   test set's minimum and maximum influenced how the training data was
+   scaled. Now fitted on training rows only
+   ([preprocessing.py:38](src/aml/preprocessing.py:38)).
+2. **The train/test boundary leaked labels.** Because the target is the
+   change in a 10-day moving average, two targets 9 days apart still share
+   underlying data. With the blocks pressed directly against each other,
+   training labels overlapped test labels. A 10-row gap is now dropped at
+   each boundary ([utils.py:17](src/aml/utils.py:17)).
 
-XAI is a reimplementation — see [Known gaps](#known-gaps). It is computed
-against seed-42 models and predates the protocol corrections below.
-
-## Protocol corrections
-
-Two look-ahead paths were found in the original preprocessing chain and
-fixed. Every number in this repository's git history before this change came
+Both leaks flattered every model roughly equally, so the ranking survived
+the fix. Every number in this repository's history before that change came
 from the leaky version.
 
-The main ranking — ARIMA and LSTM ahead, Transformer level with naive —
-survived the correction. One secondary finding did not: `TransformerUniform`
-no longer improves on the original Transformer (see [Repair
-attempts](#repair-attempts)). Treat pre-correction numbers as superseded
-rather than as a comparable earlier measurement, since the model list and
-RNG protocol changed at the same time.
-
-1. **The scaler was fitted on the whole series** before splitting, letting
-   validation and test extremes set the scale training data was normalized
-   by. It is now fitted on training rows only
-   ([preprocessing.py:38](src/aml/preprocessing.py:38)).
-2. **The splits were contiguous with no embargo.** Targets are first
-   differences of a 10-day moving average, so `y[i]` and `y[j]` share
-   underlying days whenever `|i − j| < 10`; train and test labels overlapped
-   across the boundary. A 10-sample embargo is now dropped at each boundary
-   ([utils.py:17](src/aml/utils.py:17)). The test window itself is unchanged.
-
-`tests/test_leakage.py` pins all of this down: sequences are causal, the
-scaler never sees held-out rows, the embargo is wide enough to break the
-label overlap, and anything aligned to the sample axis lines up with the
-test block.
+`tests/test_leakage.py` now checks all of this — that no sample can see data
+from after its own target date, that the scaler never touches held-out rows,
+and that the gap is wide enough to break the label overlap:
 
 ```bash
 python tests/test_leakage.py
 ```
 
-**Not fixed, deliberately:** the 10-day moving average uses
-`min_periods=1`, so the first 9 rows of each sector are computed over partial
-windows and are not comparable to the rest. This reproduces the original
-notebook and affects training rows only; changing it would break the
-byte-level reproduction of the archived run.
+## What the explainability stage shows
+
+Occlusion sensitivity — blank out one day of input, see how much the
+prediction moves — points at the most recent day (`t-1`) in 14 of 15
+model × sector combinations. That is the same story as the naive baseline
+from another direction: if yesterday's value is doing most of the work, then
+"yesterday's value, unchanged" is going to be hard to beat.
+
+Integrated gradients agree for the LSTM and RNN (`t-1` in all 10 cases) but
+scatter for the Transformer (`t-8`, `t-1`, `t-1`, `t-5`, `t-1`) — more
+evidence that its internal representation is unsettled.
+
+No single price feature dominates. `close`, `open`, `high`, and `low` each
+come out on top in 3–4 of the 15 combinations, `volume` in one.
+
+---
+
+## What to take from this
+
+The DSE numbers apply to the DSE, over four years, in five sectors. They
+aren't evidence about markets in general.
+
+The failure mode generalizes, though. A layer called on a concrete tensor in
+the Keras functional API becomes a frozen constant, silently, and a model
+built that way still trains and still reports reasonable-looking metrics.
+The only way it surfaced here was by listing the trainable weights and
+checking that the parts were doing what their names said.
+
+The more general point is that an accuracy table can't tell you whether a
+model is working for the reason you think. This one wasn't, and five rounds
+of tuning didn't reveal it.
 
 ## Limitations
 
-- **One market, four years, five sectors.** 2019 is absent from the raw
-  workbook (its sheet uses a different header schema — reproduced faithfully
-  and documented under [Data lineage](#data-lineage)). The window spans
-  COVID. This is a case study, not evidence about market structure.
-- **Exploratory, not confirmatory.** Roughly ten model variants have now been
+- **One market, four years, five sectors,** with 2019 missing and the window
+  spanning COVID. This is a case study.
+- **Exploratory, not confirmatory.** About ten model variants have now been
   scored against the same test split, with no untouched holdout left. Under
-  any multiple-testing correction, none of the comparisons here carry the
-  nominal significance they would as a single pre-registered test. Treat
-  effect directions as suggestive and effect sizes as unreliable.
-- **No economic claim.** RMSE on a reconstructed price is not a tradable
-  signal. There is no Sharpe ratio, no transaction cost, no position sizing.
-- **Not a claim about Time2Vec.** The layer as implemented here is not
-  Time2Vec. `TransformerRealT2V` tests the paper's formulation in this
-  specific small-data setting only.
-- **Five seeds is enough to separate a robust pattern from a lucky
-  initialization**, which is what it is used for. It is not enough for a
-  tight interval on any individual number.
-- **Pooled OVERALL models are not reported here.** The `all` stage still
-  trains them, but they were never seed-swept and their last published
-  numbers came from the leaky protocol, so they are omitted rather than
-  carried forward stale. XAI is likewise single-seed. ARIMA and the naive
-  baseline are deterministic and need no sweep.
-- Keras/TF training is not bit-deterministic across hardware even with a
-  fixed seed.
+  any correction for multiple testing, none of these comparisons carries the
+  significance it would as a single planned test. Treat the directions as
+  suggestive and the exact sizes as unreliable.
+- **No financial claim.** Error on a reconstructed price is not a trading
+  signal. No Sharpe ratio, no transaction costs, no position sizing.
+- **Not a verdict on Time2Vec.** The layer here isn't Time2Vec;
+  `TransformerRealT2V` tests the real formulation only in this one small
+  setting.
+- **Five seeds** separates a real pattern from a lucky run, which is what
+  it's used for. It is not enough for a tight interval on any one number.
+- **Pooled cross-sector models aren't reported.** The pipeline still trains
+  them, but they were never seed-swept and their last published numbers came
+  from the leaky protocol, so they've been dropped rather than carried
+  forward stale. Explainability results are single-seed too.
+- The 10-day moving average uses `min_periods=1`, so the first 9 rows of
+  each sector come from partial windows. This reproduces the original
+  notebook and affects training rows only; it was left alone deliberately.
+- Keras/TF training is not bit-for-bit reproducible across hardware even
+  with a fixed seed.
 
 ## Known gaps
 
-- **XAI is a fresh reimplementation, not a byte-for-byte reproduction.** No
-  surviving notebook contains the code that produced
-  `archive/reference_outputs/results/xai/*.csv` — only outputs and a summary
-  table with permanently-empty IG/SHAP columns. `src/aml/xai.py` reimplements
-  occlusion sensitivity (verified: reproduces the row/column-sum relationship
-  between the archived `*_heat.csv` and `*_time.csv`/`*_feature.csv` files
-  exactly) and integrated gradients from scratch. SHAP was never computed in
-  the original run either, so it is not reproduced.
-- **The `realworld` stage** ports the original notebook's Block 10, which was
-  present but disabled. It is wired up and usable but untested against real
-  unseen data, since none was ever supplied.
-- Pooled-OVERALL real-world evaluation was dropped; only per-sector is
-  implemented.
+- **The explainability code is a reimplementation.** No surviving notebook
+  contains the code that produced
+  `archive/reference_outputs/results/xai/*.csv` — only the outputs, and a
+  summary table whose IG and SHAP columns were always empty.
+  `src/aml/xai.py` rewrites occlusion sensitivity from scratch (verified: it
+  reproduces the row and column sums of the archived heat matrices exactly)
+  and integrated gradients likewise. SHAP was never actually computed in the
+  original run, so it isn't reproduced.
+- **The `realworld` stage** ports a block of the original notebook that was
+  present but disabled. It works, but has never been tested against genuinely
+  unseen data, because none was ever supplied.
 
 ## Folder structure
 
@@ -309,15 +323,19 @@ archive/
 
 ### Data lineage
 
-`stockprice.csv` (4270 rows, 2017-2021, 5 sectors) is reconstructed from
-`data/raw/DSE-2017 to 2021.csv.xlsx` (sheets `DSE-2017`..`DSE-2021`), filtered
-to 5 sectors, per the provenance note in `data/raw/DSE_master_filtered.xlsx`.
-The reconstruction is verified against the archived original: 4270 rows, zero
-mismatched cells.
+`stockprice.csv` (4270 rows, 2017-2021, 5 sectors) is rebuilt from
+`data/raw/DSE-2017 to 2021.csv.xlsx` (sheets `DSE-2017`..`DSE-2021`),
+filtered to 5 sectors, following the provenance note in
+`data/raw/DSE_master_filtered.xlsx`. The reconstruction is checked against
+the archived original: 4270 rows, zero mismatched cells.
 
-`archive/legacy_2011_2015_lineage/` is a separate, unused lineage: an earlier
-experiment on 2011-2015 data pulled from a since-deleted external folder
-(`D:\AML Project\real world data`). It is not wired into the pipeline.
+2019 drops out because its sheet labels the sector column differently from
+the other four years. The original run had the same gap; it is reproduced
+rather than patched, so the rebuilt file matches the archived one exactly.
+
+`archive/legacy_2011_2015_lineage/` is a separate, unused lineage — an
+earlier experiment on 2011-2015 data from a since-deleted external folder.
+It is not wired into the pipeline.
 
 ## Reproducing results
 
@@ -331,13 +349,11 @@ python run_pipeline.py all
 python run_pipeline.py all --smoke-test
 ```
 
-Individual stages (each reuses prior stage output where possible instead of
-recomputing it — `evaluate`/`visualize` load the saved run state rather than
-retraining):
+Individual stages, each reusing earlier output where it can:
 
 ```bash
 python run_pipeline.py prep-data                   # data/raw -> data/processed/stockprice.csv
-python run_pipeline.py train --epochs 50           # per-sector + OVERALL models -> outputs/models
+python run_pipeline.py train --epochs 50           # per-sector + pooled models -> outputs/models
 python run_pipeline.py evaluate                    # outputs/results/comparison_*.csv
 python run_pipeline.py visualize                   # outputs/figures
 python run_pipeline.py xai                         # outputs/results/xai
@@ -345,69 +361,69 @@ python run_pipeline.py baselines                   # naive + ARIMA
 python run_pipeline.py realworld --input new.csv   # score saved models against fresh data
 ```
 
-Reproducing the sweep that produced the tables above — one seed per process,
-each writing durably, then merge and format:
+The multi-seed sweep behind the tables above — one process per
+(seed, model), then format:
 
 ```bash
 MODELS="Transformer LSTM RNN TransformerV2 TransformerV3 TransformerUniform TransformerNoT2V TransformerRealT2V"
 for S in 42 7 123 2024 8675309; do
-    python run_pipeline.py multiseed --seed $S --models $MODELS --tag _purged
+  for M in $MODELS; do
+    python run_pipeline.py multiseed --seed $S --models $M --tag "_purged_${M}"
+  done
 done
-python run_pipeline.py multiseed-merge --tag _purged
+python run_pipeline.py baselines
 python scripts/summarize_sweep.py --tag _purged
 ```
 
-One seed per OS process is deliberate: each seed's results are written
-immediately so a crash does not lose the others, and a long-lived process
-training dozens of fresh Keras models back-to-back has been observed here to
-hit a multi-minute XLA recompilation stall.
+One model per process is deliberate. Keras doesn't release GPU memory
+between models, and training many fresh models back-to-back in a single
+process reliably triggers a multi-minute XLA recompilation stall on this
+machine — an eight-model process sat wedged for an hour at 0% GPU use. It
+also means every variant starts from the same fresh random state for a given
+seed, rather than one shaped by whichever variants happened to run first.
 
-Useful flags: `--models` (subset; everything past `Transformer LSTM RNN` is
-opt-in), `--seq-len` (lookback window; everything downstream adapts),
-`--epochs`, `--batch-size`, `--strict-data-prep` (fail instead of warn if the
-raw-data reconstruction misses the documented 4270 rows), `-v`.
+Useful flags: `--models` (anything past `Transformer LSTM RNN` is opt-in),
+`--seq-len` (lookback window; the rest of the pipeline adapts), `--epochs`,
+`--batch-size`, `--strict-data-prep` (fail rather than warn if the rebuilt
+data misses the documented 4270 rows), `-v`.
 
-### Checking a rerun reproduces the original results
+### Checking a rerun against the archived original
 
 ```bash
 diff archive/reference_outputs/results/comparison_overall.csv outputs/results/comparison_overall.csv
 ```
 
-Exact numeric match is not guaranteed — Keras/TF ops are not bit-deterministic
-across versions and hardware even with a fixed seed — but shapes and ballpark
-metrics should agree. Note that the protocol corrections above intentionally
-change the numbers relative to the archived run.
+An exact match isn't expected — Keras and TF aren't bit-for-bit
+deterministic across versions and hardware even with a fixed seed, and the
+leak fixes intentionally move the numbers away from the archived run.
 
 ## GPU training (WSL2)
 
-`pip install tensorflow` on native Windows has been CPU-only since TF 2.11
-(Google's own decision, not a local misconfiguration). To use an NVIDIA GPU on
-Windows, run this project inside WSL2 instead:
+`pip install tensorflow` on native Windows has been CPU-only since TF 2.11.
+To use an NVIDIA GPU on Windows, run this project inside WSL2:
 
 ```bash
 # One-time setup, from a Windows shell (skip if WSL2 + a distro already exists):
 wsl --install
 
 # Inside the WSL distro (e.g. Ubuntu):
-curl -LsSf https://astral.sh/uv/install.sh | sh   # prebuilt Python binaries, no compiling
+curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
-uv python install 3.12                            # match a Python version TF actually ships wheels for
+uv python install 3.12
 uv venv ~/venvs/aml-gpu --python 3.12
-cd /mnt/<drive>/AML                                 # this project, via the Windows-drive mount
+cd /mnt/<drive>/AML
 uv pip install --python ~/venvs/aml-gpu -r requirements.txt "tensorflow[and-cuda]"
 ```
 
-`tensorflow[and-cuda]` pulls matching CUDA/cuDNN as regular pip packages, so
-no manual system-wide CUDA toolkit install is needed inside WSL. It relies on
-the Windows NVIDIA driver via WSL2 GPU passthrough (`/usr/lib/wsl/lib`),
-which is already there if `nvidia-smi` works on the Windows side.
+`tensorflow[and-cuda]` pulls matching CUDA/cuDNN in as ordinary pip
+packages, so no system-wide CUDA install is needed inside WSL. It uses the
+Windows NVIDIA driver through WSL2 passthrough, which is already in place if
+`nvidia-smi` works on the Windows side.
 
-**Known papercut on some distro/glibc combinations:** TensorFlow's RPATH-based
-auto-discovery of the pip-installed CUDA libraries can fail to register the
-GPU (`tf.config.list_physical_devices('GPU')` returns `[]`) even though
-everything installed correctly. Fix: point `LD_LIBRARY_PATH` at the installed
-`nvidia-*` package lib dirs. Bake it into the venv so it's automatic on every
-`source ~/venvs/aml-gpu/bin/activate`:
+**Known papercut.** On some distro/glibc combinations TensorFlow fails to
+find the pip-installed CUDA libraries and reports no GPU, even though
+everything installed correctly. Point `LD_LIBRARY_PATH` at them, baked into
+the venv so it applies on every activate:
 
 ```bash
 V=~/venvs/aml-gpu
@@ -415,14 +431,13 @@ LIBDIRS=$(find "$V/lib/python3.12/site-packages/nvidia" -maxdepth 2 -type d -nam
 echo "export LD_LIBRARY_PATH=\"${LIBDIRS}\${LD_LIBRARY_PATH:-}\"" >> "$V/bin/activate"
 ```
 
-Then run the pipeline as usual, from inside the activated venv:
+Then run as usual from inside the activated venv:
 
 ```bash
 source ~/venvs/aml-gpu/bin/activate
 cd /mnt/<drive>/AML
-python run_pipeline.py all --smoke-test   # verify: look for "Created device .../GPU:0" in the log
+python run_pipeline.py all --smoke-test   # look for "Created device .../GPU:0" in the log
 ```
-
 
 ## License
 
