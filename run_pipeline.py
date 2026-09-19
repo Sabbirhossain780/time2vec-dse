@@ -43,7 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from aml import pipeline, realworld  # noqa: E402
-from aml.config import ALL_MODEL_TYPES, BATCH_SIZE, EPOCHS, MODEL_TYPES, get_paths, set_seeds  # noqa: E402
+from aml.config import ALL_MODEL_TYPES, BATCH_SIZE, EPOCHS, MODEL_TYPES, SEQ_LEN, get_paths, set_seeds  # noqa: E402
 
 
 def main():
@@ -56,6 +56,9 @@ def main():
                          help="Seed for the 'multiseed' stage (one seed per invocation).")
     parser.add_argument("--seeds", type=int, nargs="+", default=None,
                          help="Seeds for 'multiseed-merge' (default: 42 7 123 2024 8675309).")
+    parser.add_argument("--seq-len", type=int, default=SEQ_LEN,
+                         help=f"Lookback window length (default {SEQ_LEN}). Everything downstream "
+                              "adapts automatically; use --tag to keep results separate.")
     parser.add_argument("--tag", type=str, default="",
                          help="Filename tag for the 'multiseed' stage, e.g. '_transformerv2', "
                               "so an experimental sweep doesn't overwrite the baseline seed files.")
@@ -94,11 +97,11 @@ def main():
         return
 
     if args.stage == "preprocess":
-        pipeline.stage_load_and_preprocess(paths)
+        pipeline.stage_load_and_preprocess(paths, seq_len=args.seq_len)
         return
 
     # Stages below need the full state (df, processed sequences, scalers).
-    state = pipeline.stage_load_and_preprocess(paths)
+    state = pipeline.stage_load_and_preprocess(paths, seq_len=args.seq_len)
 
     if args.stage == "train":
         pipeline.stage_train(state, model_types=args.models, epochs=epochs, batch_size=args.batch_size)

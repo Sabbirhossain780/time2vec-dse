@@ -22,7 +22,8 @@ MODEL_TYPES = ["Transformer", "LSTM", "RNN"]
 # experimental variant -- selectable via --models but not part of the
 # default MODEL_TYPES that `all`/most stages iterate, so it never silently
 # changes the default pipeline's behavior or runtime.
-ALL_MODEL_TYPES = MODEL_TYPES + ["TransformerV2"]
+ALL_MODEL_TYPES = MODEL_TYPES + ["TransformerV2", "TransformerV3", "TransformerUniform",
+                                 "TransformerNoT2V", "TransformerRealT2V"]
 
 EPOCHS = 50
 BATCH_SIZE = 32
@@ -30,6 +31,12 @@ TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
 EARLY_STOP_PATIENCE = 5
 RANDOM_SEED = 42
+
+# Targets are first differences of a 10-day moving average, so y[i] and y[j]
+# share underlying days whenever |i - j| < 10. Contiguous train/val/test slices
+# therefore leak overlapping labels across their boundaries. Dropping EMBARGO
+# samples at each boundary removes the overlap (Lopez de Prado's purging/embargo).
+EMBARGO = 10
 
 # The 5 sector codes kept in the raw DSE workbook, and how they map to the
 # clean sector names used everywhere downstream (matches the provenance note

@@ -24,7 +24,7 @@ import joblib
 import pandas as pd
 
 from . import baselines, data_prep, evaluate, multiseed, preprocessing, train, visualize, xai
-from .config import EPOCHS, BATCH_SIZE, MODEL_TYPES, Paths, get_paths, set_seeds
+from .config import EPOCHS, BATCH_SIZE, MODEL_TYPES, SEQ_LEN, Paths, get_paths, set_seeds
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +58,13 @@ def stage_prep_data(paths: Paths, strict: bool = False) -> pd.DataFrame:
     return data_prep.build_stockprice_csv(paths.raw_xlsx, paths.processed_csv, strict=strict)
 
 
-def stage_load_and_preprocess(paths: Paths) -> PipelineState:
+def stage_load_and_preprocess(paths: Paths, seq_len: int = SEQ_LEN) -> PipelineState:
     state = PipelineState(paths=paths)
     state.df = preprocessing.load_stockprice(paths.processed_csv)
     state.sectors = state.df["sector"].dropna().unique().tolist()
-    logger.info("Sectors: %s", state.sectors)
+    logger.info("Sectors: %s | seq_len=%d", state.sectors, seq_len)
     state.processed_data_dict, state.scalers = preprocessing.process_sectors(
-        state.df, state.sectors, paths.scalers_dir)
+        state.df, state.sectors, paths.scalers_dir, seq_len=seq_len)
     return state
 
 
